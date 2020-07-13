@@ -868,10 +868,20 @@ Proof
   ))
 QED
 
+(* model gets completely rebuild iff ~keeps_model *)
+Definition keeps_model_def:
+  (keeps_model (ConstSpec ov eqs prop) =
+    (∃c t. eqs = [(c,t)] ∧ prop = (Var c (typeof t) === t)))
+  ∧ (keeps_model (NewAxiom _) = F)
+  ∧ (keeps_model _ = T)
+End
+
 (* list symbols introduced by an update *)
 Definition upd_introduces_def:
-  (upd_introduces (ConstSpec ov eqs prop)
-    = MAP (λ(s,t). INR (Const s (typeof t))) eqs)
+  (upd_introduces (ConstSpec ov eqs prop) =
+    if (∃c t. eqs = [(c,t)] ∧ prop = (Var c (typeof t) === t))
+    then MAP (λ(s,t). INR (Const s (typeof t))) eqs
+    else [])
   /\ (upd_introduces (TypeDefn name pred abs rep)
     = [INL (Tyapp name (MAP Tyvar (mlstring_sort (tvars pred))))])
   /\ (upd_introduces (NewType name n)
@@ -879,6 +889,12 @@ Definition upd_introduces_def:
   /\ (upd_introduces (NewConst name ty) = [INR (Const name ty)])
   /\ (upd_introduces (NewAxiom prop) = [])
 End
+
+Theorem keeps_model_upd_introduces:
+  !upd. ¬NULL (upd_introduces upd)⇔ keeps_model upd
+Proof
+  Cases >> rw[NULL_EQ,upd_introduces_def,keeps_model_def]
+QED
 
 Triviality upd_introduces_is_const_or_type:
   !upd u. MEM u (upd_introduces upd) ⇒ is_const_or_type u
@@ -1053,7 +1069,7 @@ Theorem indep_frag_upd_frag_reduce:
   !ctxt upd.
   let ext = upd::ctxt;
     idf = indep_frag_upd ext upd (total_fragment (sigof ext));
-  in extends_init ext
+  in extends_init ext ∧ keeps_model upd
   ⇒ FST idf ⊆ FST (total_fragment (sigof ctxt))
   /\ SND idf ⊆ SND (total_fragment (sigof ctxt))
 Proof
@@ -1076,15 +1092,12 @@ Proof
   (* ConstSpec *)
   >- (
     rw[ground_consts_def,ground_types_def,type_ok_def,term_ok_def,FLOOKUP_UPDATE,FLOOKUP_FUNION]
+    >> rfs[keeps_model_def]
     >> EVERY_CASE_TAC
     >> rpt(goal_assum (first_assum o mp_then Any mp_tac))
     >> fs[is_instance_simps,DISJ_EQ_IMP]
-    >> imp_res_tac ALOOKUP_MEM
-    >> fs[MEM_MAP,PULL_EXISTS]
-    >> first_x_assum drule
     >> rename1`TYPE_SUBST s _`
-    >> disch_then (qspec_then `s` mp_tac)
-    >> pairarg_tac
+    >> first_x_assum (qspec_then `s` mp_tac)
     >> fs[LR_TYPE_SUBST_def,INST_CORE_def,INST_def]
   )
   (* NewType *)
@@ -1314,7 +1327,7 @@ val type_interpretation_ext_of_def =
    else if ~(orth_ctxt (upd::ctxt) /\ extends_init (upd::ctxt)) then
      One:'U
    else if ty ∈ FST (indep_frag_upd (upd::ctxt) upd (total_fragment (sigof (upd::ctxt)))) ∧
-           (∀tm. upd ≠ NewAxiom tm) then
+           keeps_model upd then
     Δ ty
    else
      case mapPartial (type_matches ty) (upd::ctxt) of
@@ -1369,7 +1382,7 @@ val type_interpretation_ext_of_def =
    else if ~(orth_ctxt (upd::ctxt) /\ extends_init (upd::ctxt)) then
      One:'U
    else if ((name,ty) ∈ SND (indep_frag_upd (upd::ctxt) upd (total_fragment (sigof (upd::ctxt))))) ∧
-           (∀tm. upd ≠ NewAxiom tm) then
+           keeps_model upd then
      Γ (name,ty)
    else
      case FILTER ($<> []) (MAP (defn_matches name ty) (upd::ctxt)) of
@@ -1989,11 +2002,11 @@ Theorem model_conservative_extension_prop:
     ∧ is_frag_interpretation (total_fragment (sigof ctxt)) Δ Γ
     ⇒
       (!c ty. (c,ty) ∈ SND (indep_frag_upd (upd::ctxt) upd (total_fragment (sigof (upd::ctxt)))) ∧
-          (∀tm. upd ≠ NewAxiom tm)
+          keeps_model upd
         ⇒ term_interpretation_ext_of ind upd ctxt Δ Γ c ty = Γ (c,ty))
       ∧
       (!ty. ty ∈ FST (indep_frag_upd (upd::ctxt) upd (total_fragment (sigof (upd::ctxt)))) ∧
-          (∀tm. upd ≠ NewAxiom tm)
+          keeps_model upd
         ⇒ type_interpretation_ext_of ind upd ctxt Δ Γ ty = Δ ty)
 Proof
   rpt strip_tac
@@ -2220,19 +2233,14 @@ Proof
   ) >>
   fs[updates_cases] >> rveq >>
   qpat_x_assum `MEM _ (upd_introduces _)` (strip_assume_tac o REWRITE_RULE[MEM_MAP,upd_introduces_def]) >>
-  fs[constspec_ok_def] >> pairarg_tac >>
-  FULL_CASE_TAC >> fs[]
-  >- (
-    dxrule_then (assume_tac o CONJUNCT1) extends_init_NIL_orth_ctxt >>
-    match_mp_tac (GEN_ALL TypeDefn_NewConst_non_overlapping) >>
-    goal_assum (first_assum o mp_then Any mp_tac) >>
-    res_tac >> rveq >>
-    rename1`NewConst c typ` >>
-    map_every qexists_tac [`tyname`,`typ`,`pred`,`c`,`abs`] >>
-    fs[]
-  ) >>
-  imp_res_tac (Q.ISPEC `FST :mlstring # term -> mlstring ` MEM_MAP_f) >>
-  res_tac >>
+  fs[constspec_ok_def] >>
+  FULL_CASE_TAC >> fs[] >>
+  dxrule_then (assume_tac o CONJUNCT1) extends_init_NIL_orth_ctxt >>
+  match_mp_tac (GEN_ALL TypeDefn_NewConst_non_overlapping) >>
+  goal_assum (first_assum o mp_then Any mp_tac) >>
+  fs[MEM] >> rveq >> fs[] >>
+  rename1`NewConst c typ` >>
+  map_every qexists_tac [`tyname`,`typ`,`pred`,`c`,`abs`] >>
   fs[]
 QED
 
@@ -2279,7 +2287,7 @@ Proof
          fs[is_frag_interpretation_def,total_fragment_def,is_type_frag_interpretation_def]) >>
       TOP_CASE_TAC >- metis_tac[mem_one] >>
       reverse TOP_CASE_TAC >- rw[mem_one] >>
-      qpat_assum ‘~(_ ∧ (∀tm. upd ≠ NewAxiom tm))’ (fn thm => ABBREV_TAC “a1 = ^(concl thm)”) >>
+      qpat_assum ‘~(_ ∧ keeps_model upd)’ (fn thm => ABBREV_TAC “a1 = ^(concl thm)”) >>
       PairCases_on `h` >> rename1 `pred,ty',tvs` >>
       simp[] >>
       drule type_matches_is_instance' >>
@@ -2412,7 +2420,7 @@ Proof
                  suffices_by metis_tac[] >>
                drule_then match_mp_tac (MP_CANON ext_inhabited_frag_inhabited') >>
                metis_tac[]) >>
-            qpat_assum ‘~(_ ∧ (∀tm. upd ≠ NewAxiom tm))’ (fn thm => ABBREV_TAC “aaa = ^(concl thm)”) >>
+            qpat_assum ‘~(_ ∧ keeps_model upd)’ (fn thm => ABBREV_TAC “aaa = ^(concl thm)”) >>
             (* Hilbert choice *)
             fs[] >>
             fs[term_ok_def] >>
@@ -2460,7 +2468,7 @@ Proof
                drule_then match_mp_tac (MP_CANON ext_inhabited_frag_inhabited') >>
                metis_tac[]) >>
             (* Hilbert choice *)
-            qpat_assum ‘~(_ ∧ (∀tm. upd ≠ NewAxiom tm))’ (fn thm => ABBREV_TAC “aaa = ^(concl thm)”) >>
+            qpat_assum ‘~(_ ∧ keeps_model upd)’ (fn thm => ABBREV_TAC “aaa = ^(concl thm)”) >>
             fs[] >>
             fs[term_ok_def] >>
             simp[ext_type_frag_builtins_Fun] >>
@@ -2498,7 +2506,7 @@ Proof
          rw[] >>
          MAP_FIRST drule [rep_matches_is_instance,abs_matches_is_instance] >>
          disch_then(MAP_EVERY assume_tac o CONJUNCTS) >>
-         qpat_assum ‘~(_ ∧ (∀tm. upd ≠ NewAxiom tm))’ (fn thm => ABBREV_TAC “aaa = ^(concl thm)”) >>
+         qpat_assum ‘~(_ ∧ keeps_model upd)’ (fn thm => ABBREV_TAC “aaa = ^(concl thm)”) >>
          FULL_SIMP_TAC bool_ss [instance_subst_completeness] >>
          rveq >>
          fs[IS_SOME_EXISTS] >>
@@ -2542,7 +2550,7 @@ Proof
          qunabbrev_tac `σ'` >>
          Cases_on `TYPE_SUBST sigma abs_type ∈
                    FST (indep_frag_upd actxt upd (total_fragment (sigof actxt))) ∧
-                   ∀tm. upd ≠ NewAxiom tm
+                   keeps_model upd
                   ` >-
            (
             CCONTR_TAC >>
@@ -2587,7 +2595,7 @@ Proof
             rfs[] >>
             goal_assum drule
            ) >>
-         qpat_assum ‘~(_ ∧ (∀tm. upd ≠ NewAxiom tm))’ (fn thm => ABBREV_TAC “aaa = ^(concl thm)”) >>
+         qpat_assum ‘~(_ ∧ keeps_model upd)’ (fn thm => ABBREV_TAC “aaa = ^(concl thm)”) >>
          qpat_x_assum `_ ⋲ _` (assume_tac o REWRITE_RULE[Once type_interpretation_ext_of_def]) >>
          Q.SUBGOAL_THEN `upd::ctxt = actxt` SUBST_ALL_TAC >- rw[Abbr`actxt`] >>
          rfs[] >>
@@ -2651,7 +2659,7 @@ Proof
          unabbrev_all_tac >>
          match_mp_tac ext_type_frag_mono_eq >>
          rw[MEM_MAP,MEM_FLAT,PULL_EXISTS]) >>
-      qpat_assum ‘~(_ ∧ (∀tm. upd ≠ NewAxiom tm))’ (fn thm => ABBREV_TAC “aaa = ^(concl thm)”) >>
+      qpat_assum ‘~(_ ∧ keeps_model upd)’ (fn thm => ABBREV_TAC “aaa = ^(concl thm)”) >>
       fs[FILTER_EQ_CONS] >>
       rpt(pairarg_tac >> fs[] >> rveq) >>
       rename1 `HD ll` >> Cases_on `ll` >> fs[] >> rveq >>
@@ -2876,7 +2884,7 @@ Theorem type_interpretation_ext_of_alt:
    else if ~orth_ctxt ctxt then
      One:'U
    else if ty ∈ FST (indep_frag_upd ctxt (HD ctxt) (total_fragment (sigof ctxt))) ∧
-           (∀tm. HD ctxt ≠ NewAxiom tm) then
+           keeps_model (HD ctxt) then
      Δ ty
    else
      case mapPartial (type_matches ty) ctxt of
@@ -2927,7 +2935,7 @@ Theorem type_interpretation_ext_of_alt:
    else if ~orth_ctxt ctxt then
      One:'U
    else if (name,ty) ∈ SND (indep_frag_upd ctxt (HD ctxt) (total_fragment (sigof ctxt))) ∧
-           (∀tm. HD ctxt ≠ NewAxiom tm) then
+           keeps_model (HD ctxt) then
      Γ (name,ty)
    else
      case FILTER ($<> []) (MAP (defn_matches name ty) ctxt) of
@@ -3003,7 +3011,7 @@ Proof
   (IF_CASES_TAC >- rw[]) >>
   (IF_CASES_TAC >- (fs[extends_init_def,ground_consts_def] >> fs[])) >>
   (IF_CASES_TAC >- rw[]) >>
-  qpat_assum ‘~(_ ∧ (∀tm. upd ≠ NewAxiom tm))’ (fn thm => ABBREV_TAC “aaa = ^(concl thm)”)
+  qpat_assum ‘~(_ ∧ keeps_model upd)’ (fn thm => ABBREV_TAC “aaa = ^(concl thm)”)
   >-
     ((* type interpretation *)
      qpat_abbrev_tac ‘a1 = upd::ctxt’ >>
@@ -3483,7 +3491,7 @@ Proof
       qmatch_goalsub_abbrev_tac ‘HD ctxt’ >>
       Cases_on ‘(∀c ty. MEM (Const c ty) (allCInsts p) ⇒ (c,TYPE_SUBSTf sigma ty) ∈ SND (indep_frag_upd ctxt (HD ctxt) (total_fragment (sigof ctxt)))) ∧
                 (∀ty ty'. MEM ty (allTypes p) ∧ MEM ty' (allTypes'(TYPE_SUBSTf sigma ty)) ⇒ ty' ∈ FST (indep_frag_upd ctxt (HD ctxt) (total_fragment (sigof ctxt))))
-               ∧ ∀tm. HD ctxt ≠ NewAxiom tm’
+               ∧ keeps_model (HD ctxt)’
       >- (imp_res_tac terms_of_frag_uninst_welltyped >>
           qabbrev_tac ‘v2 = (λ(n,ty). if VFREE_IN (Var n ty) p then v(n,ty) else True)’ >>
           drule termsem_frees >>
