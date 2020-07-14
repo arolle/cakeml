@@ -18,6 +18,30 @@ val _ = Parse.hide "mem";
 
 val mem = ``mem:'U->'U->bool``
 
+Definition conexts_of_upd_alt_def:
+  (conexts_of_upd_alt (ConstSpec overload eqs prop) =
+    MAP (λ(s,t). Const s (typeof t) === t) eqs) ∧
+  (conexts_of_upd_alt (TypeDefn name pred abs_name rep_name) =
+    let abs_type = Tyapp name (MAP Tyvar (MAP implode (STRING_SORT (MAP explode (tvars pred))))) in
+    let rep_type = domain (typeof pred) in
+    let abs = Const abs_name (Fun rep_type abs_type) in
+    let rep = Const rep_name (Fun abs_type rep_type) in
+    let a = Var (strlit "a") abs_type in
+    let r = Var (strlit "r") rep_type in
+      [Comb abs (Comb rep a) === a;
+       Comb pred r === (Comb rep (Comb abs r) === r)]) ∧
+  (conexts_of_upd_alt _ = [])
+End
+
+Overload conexts_alt = ``λctxt. FLAT (MAP conexts_of_upd_alt ctxt)``
+Overload axioms_of_upd_alt = ``λupd. axexts_of_upd upd ++ conexts_of_upd_alt upd``
+
+Overload axioms_of_upd_alt = ``λupd. axexts_of_upd upd ++ conexts_of_upd_alt upd``
+Overload axiom_list_alt = ``λctxt. FLAT (MAP axioms_of_upd_alt ctxt)``
+Overload axsof_alt = ``λctxt. set (axiom_list_alt ctxt)``
+
+Overload thyof_alt = ``λctxt:update list. (sigof ctxt, axsof_alt ctxt)``                                     
+
 (* list functions *)
 
 Theorem IS_SUFFIX_APPEND_NOT_MEM:
@@ -3457,14 +3481,14 @@ Theorem interpretation_models_axioms_lemma:
     ) /\
     orth_ctxt (ctxt1 ++ upd::ctxt2) /\
     terminating (subst_clos (dependency (ctxt1 ++ upd::ctxt2))) /\
-    (∀p. MEM p (axiom_list ctxt2) ==>
+    (∀p. MEM p (axiom_list_alt ctxt2) ==>
           satisfies_t (sigof (ctxt1 ++ upd::ctxt2))
           (ext_type_frag_builtins (type_interpretation_ext_of ind (HD (ctxt1 ++ upd::ctxt2)) (TL (ctxt1 ++ upd::ctxt2)) Δ Γ))
           (ext_term_frag_builtins
              (ext_type_frag_builtins (type_interpretation_ext_of ind (HD (ctxt1 ++ upd::ctxt2)) (TL (ctxt1 ++ upd::ctxt2)) Δ Γ))
              (UNCURRY (term_interpretation_ext_of ind (HD (ctxt1 ++ upd::ctxt2)) (TL (ctxt1 ++ upd::ctxt2)) Δ Γ))) ([],p)) /\
-    models Δ Γ (thyof(TL((ctxt1 ++ upd::ctxt2)))) ∧
-    MEM p (axioms_of_upd upd)
+    models Δ Γ (thyof_alt(TL((ctxt1 ++ upd::ctxt2)))) ∧
+    MEM p (axioms_of_upd_alt upd)
     ==>
     satisfies_t (sigof (ctxt1 ++ upd::ctxt2))
           (ext_type_frag_builtins (type_interpretation_ext_of ind (HD (ctxt1 ++ upd::ctxt2)) (TL (ctxt1 ++ upd::ctxt2)) Δ Γ))
@@ -4274,14 +4298,49 @@ Proof
   >- ((* conexts of new axiom (vacuous) *)
       first_x_assum match_mp_tac >>
       pop_assum(strip_assume_tac o REWRITE_RULE[MEM_SPLIT]) >>
-      fs[conexts_of_upd_def])
+      fs[conexts_of_upd_alt_def])
   >- ((* NewConst *)
-      fs[conexts_of_upd_def])
+      fs[conexts_of_upd_alt_def])
   >- ((* NewConst *)
-      fs[conexts_of_upd_def])
+      fs[conexts_of_upd_alt_def])
   >- ((* ConstSpec *)
-      fs[conexts_of_upd_def] >>
+      fs[conexts_of_upd_alt_def,MEM_MAP,PULL_EXISTS] >>
       rw[satisfies_t_def,satisfies_def] >>
+
+      rename1 ‘MEM eq eqs’ >> Cases_on ‘eq’ >> fs[] >> rveq >>
+      rename1 ‘MEM (s,t) eqs’ >>
+      dep_rewrite.DEP_ONCE_REWRITE_TAC[termsem_ext_equation |> REWRITE_RULE[termsem_ext_def]] >>
+      simp[boolean_eq_true] >>
+      conj_tac >-
+        (rpt(goal_assum drule) >>
+         fs[valuates_frag_builtins] >>
+         imp_res_tac terms_of_frag_uninst_welltyped >>
+         qpat_x_assum ‘_ ∈ terms_of_frag_uninst _ _’ mp_tac >>
+         dep_rewrite.DEP_ONCE_REWRITE_TAC[terms_of_frag_uninst_equation] >>
+         simp[] >>
+         conj_tac >- goal_assum drule >>
+         rw[] >>
+         imp_res_tac proves_term_ok >>
+         fs[EVERY_MEM,MEM_MAP,PULL_EXISTS] >>
+         res_tac >>
+         fs[] >>
+         rfs[term_ok_equation] >>
+         reverse conj_tac >-
+          (first_x_assum(mp_then (Pos last) match_mp_tac term_ok_extend) >>
+           conj_tac >>
+           match_mp_tac(CONJUNCT2 SUBMAP_FUNION_ID) >>
+           drule_then (assume_tac o C MATCH_MP init_ctxt_extends) extends_trans >>
+           drule extends_NIL_DISJOINT >>
+           fs[]) >>
+         drule_then (assume_tac o C MATCH_MP init_ctxt_extends) extends_trans >>          
+         drule (extends_update_ok_NewConst |> REWRITE_RULE[IMP_CONJ_THM] |> CONJUNCT1) >>
+         simp[] >>
+         disch_then match_mp_tac >>
+         disj2_tac >>
+         cheat (* easy *)) >>
+
+      (* old proof starts here *)
+      simp[termsem_def,eq]                                        
       `!name. MEM name (MAP FST eqs) ==> ~MEM name (MAP FST (const_list ctxt1))`
         by(rw[] >>
            drule_then (assume_tac o C MATCH_MP init_ctxt_extends) extends_trans >>
@@ -5844,8 +5903,64 @@ Proof
            drule_then drule terms_of_frag_uninst_combE >>
            rw[]) >>
       metis_tac[mem_boolset,true_neq_false])
-QED
+QED        
 
+Theorem models_alt_IMP_models:
+  is_set_theory ^mem ⇒
+    ∀upd ctxt Δ Γ. ctxt extends init_ctxt
+            ∧ (models Δ Γ (thyof_alt ctxt))
+    ⇒ models Δ Γ (thyof ctxt)
+Proof
+  rw[models_def,satisfies_t_def,MEM_APPEND,MEM_FLAT,MEM_MAP,PULL_EXISTS,LEFT_AND_OVER_OR,DISJ_IMP_THM,FORALL_AND_THM] >- res_tac >>
+  first_x_assum(drule_then strip_assume_tac) >>
+  Cases_on ‘upd’ >>
+  fs[conexts_of_upd_def,conexts_of_upd_alt_def] >>
+  rw[satisfies_def] >>
+  dep_rewrite.DEP_ONCE_REWRITE_TAC[MP_CANON termsem_VSUBST] >>
+  conj_tac >-
+    (conj_tac >- cheat >>
+     rw[MEM_MAP,PULL_EXISTS] >>
+     pairarg_tac >> fs[] >>
+     metis_tac[has_type_rules]) >>
+  fs[MEM_MAP,PULL_EXISTS] >>
+  rw[satisfies_def] >>
+  rename1 ‘ConstSpec b eqs prop’ >>
+  ‘(thyof ctxt,MAP (λ(s,t). Var s (typeof t) === t) eqs) |- prop’
+   by(qpat_x_assum ‘MEM (ConstSpec _ _ _) _’ (strip_assume_tac o REWRITE_RULE[MEM_SPLIT]) >>
+      drule_then (assume_tac o C MATCH_MP init_ctxt_extends) extends_trans >>
+      rveq >>
+      drule extends_APPEND_NIL >> strip_tac >>
+      drule extends_NIL_CONS_updates >>
+      disch_then(strip_assume_tac o REWRITE_RULE[updates_cases]) >>
+      TRY(fs[] >> NO_TAC) >>
+      drule extends_NIL_CONS_updates >> strip_tac >>
+      drule_all updates_proves >>
+      strip_tac >>     
+      drule extends_NIL_APPEND_extends >> strip_tac >>
+      drule_all extends_proves >>
+      fs[]) >>
+  
+  drule_all proves_sound >>
+  rw[entails_def,satisfies_t_def,satisfies_def] >>
+  pop_assum(match_mp_tac o MP_CANON) >>
+  
+  
+      
+               
+               proves_sound
+                          
+    >- cheat
+
+                         rotate 1
+
+                                fs[
+                         
+  dep_rewrite.DEP_ONCE_REWRITE_TAC[MP_CANON termsem_VSUBST] >>
+  
+  
+    
+QED
+           
 Theorem interpretation_is_model:
   is_set_theory ^mem ⇒
     ∀upd ctxt Δ Γ. ctxt extends init_ctxt ∧ inhabited ind ∧ upd updates ctxt
