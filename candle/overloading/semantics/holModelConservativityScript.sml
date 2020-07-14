@@ -2282,7 +2282,7 @@ Proof
       TOP_CASE_TAC >-
         (unabbrev_all_tac >>
          drule_then strip_assume_tac (indep_frag_upd_frag_reduce |> SIMP_RULE std_ss [LET_THM]) >>
-         fs[] >>
+         fs[] >> res_tac >>
          dxrule_all_then strip_assume_tac SUBSET_IMP >>
          fs[is_frag_interpretation_def,total_fragment_def,is_type_frag_interpretation_def]) >>
       TOP_CASE_TAC >- metis_tac[mem_one] >>
@@ -2399,7 +2399,7 @@ Proof
           ) >>
           unabbrev_all_tac >>
           drule_then strip_assume_tac (indep_frag_upd_frag_reduce |> SIMP_RULE std_ss [LET_THM]) >>
-          fs[] >>
+          fs[] >> res_tac >>
           dxrule_all_then strip_assume_tac SUBSET_IMP >>
           qpat_x_assum `FST _ ⊆ FST _` kall_tac >>
           fs[is_frag_interpretation_def,total_fragment_def,GSYM PFORALL_THM]
